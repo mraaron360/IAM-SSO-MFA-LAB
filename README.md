@@ -15,8 +15,6 @@ A Flask web app with **Okta OIDC + SAML** integrations.
 - Metadata endpoints
 - User session & claims display
 
-📖 [Setup Guide](sso-integration-lab/README.md)  
-📄 [SSO Flow Documentation](sso-integration-lab/docs/SSO_Flow.md)
 
 ---
 
@@ -25,8 +23,6 @@ Python scripts using the **Okta API** to audit & enforce MFA policies.
 
 - `okta_mfa_audit.py` → Generates `mfa_report.csv` with enrolled factors  
 - `okta_mfa_enforce.py` → Adds non-MFA users to an **“MFA Required”** group  
-
-📖 [Setup Guide](mfa-enforcement/README.md)
 
 ---
 
