@@ -1,0 +1,24 @@
+# 🔐 IAM SSO + MFA Lab
+
+A hands-on lab showcasing **Single Sign-On (SSO)** and **Multi-Factor Authentication (MFA)** engineering skills with Okta.
+
+---
+
+## 🚀 What This Project Does
+- Integrates a Flask app with **Okta OIDC + SAML** for SSO
+- Demonstrates:
+  - OIDC Authorization Code Flow
+  - SAML 2.0 AuthnRequest / Response
+  - Metadata endpoints
+  - User session & claims display
+- Python scripts to **audit & enforce MFA** using Okta API
+  - `okta_mfa_audit.py` → Generates `mfa_report.csv` of enrolled factors
+  - `okta_mfa_enforce.py` → Moves non-MFA users into a required MFA group
+
+---
+
+## ⚙️ Setup Instructions
+1. Clone this repo:
+   ```bash
+   git clone https://github.com/mraaron360/IAM-SSO-MFA-LAB.git
+   cd IAM-SSO-MFA-LAB
