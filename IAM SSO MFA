@@ -1,10 +1,10 @@
-# 🔐 IAM SSO + MFA Lab
+# IAM SSO + MFA Lab
 
 Hands-on Identity & Access Management (IAM) projects to showcase **engineering skills** in authentication, SSO, and security automation.
 
 ---
 
-## 📌 Projects Included
+## Projects Included
 
 ### 1) SSO Integration Lab
 - Flask web app with **Okta OIDC + SAML** integrations  
@@ -36,11 +36,11 @@ Hands-on Identity & Access Management (IAM) projects to showcase **engineering s
 
 ---
 
-## 🚀 Why this repo?
-✅ Demonstrates **real IAM engineering tasks**  
-✅ End-to-end **SSO integration (OIDC + SAML)**  
-✅ **MFA compliance automation** with Okta APIs  
-✅ Perfect for interviews & portfolio
+##  Why this repo?
+ Demonstrates **real IAM engineering tasks**  
+ End-to-end **SSO integration (OIDC + SAML)**  
+**MFA compliance automation** with Okta APIs  
+ Perfect for interviews & portfolio
 
 ---
 
