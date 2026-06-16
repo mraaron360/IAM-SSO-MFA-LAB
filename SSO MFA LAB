@@ -1,0 +1,289 @@
+#IAM SSO MFA Lab
+
+A hands-on Identity & Access Management lab demonstrating **SAML 2.0 SSO** integration with **MFA enforcement** via Conditional Access. Uses **Azure AD / Entra ID** as the IdP and **SimpleSAMLphp** as the test SP. Includes PowerShell automation, config templates, and a validation/audit report generator.
+
+> **Environment:** Azure AD / Entra ID · Okta · SimpleSAMLphp · PowerShell (Microsoft.Graph)  
+> **Protocols:** SAML 2.0 · OIDC  
+> **Concepts:** SSO · MFA · Conditional Access · Risk-Based Auth · SAML Assertion Inspection
+
+-----
+
+## 📁 Repository Structure
+
+```
+iam-sso-mfa-lab/
+├── scripts/
+│   ├── powershell/
+│   │   ├── 01-AzureAD-SSO-Setup.ps1          # Register Enterprise App + SAML config
+│   │   ├── 02-MFA-ConditionalAccess.ps1       # CA policies: MFA, block legacy, risk step-up
+│   │   └── 03-Validate-SSO-MFA.ps1            # Audit sign-in logs + generate HTML report
+│   └── bash/
+│       └── setup-simplesamlphp-sp.sh          # Deploy lightweight SAML SP (Ubuntu/Debian)
+├── configs/
+│   ├── saml/saml-sp-metadata.xml
+│   ├── oidc/oidc-app-config.json
+│   └── okta/okta-saml-app.json · okta-mfa-policy.json
+├── diagrams/
+│   ├── sso-mfa-flow.mermaid
+│   └── architecture.mermaid
+└── docs/SETUP-CHECKLIST.md
+```
+
+-----
+
+## 🏗️ Architecture
+
+```mermaid
+graph TB
+    subgraph Users["👥 Users"]
+        U1[Internal User]
+        U2[External / BYOD]
+    end
+    subgraph IdP[ Identity Provider"]
+        AAD[Azure AD / Entra ID]
+        OKTA[Okta]
+        CA[Conditional Access Engine]
+    end
+    subgraph MFA["📱 MFA"]
+        OV[Okta Verify / Authenticator]
+        FIDO[FIDO2 / WebAuthn]
+    end
+    subgraph SP["🖥️ Service Provider"]
+        SSP[SimpleSAMLphp]
+        APP[Protected App]
+    end
+
+    U1 & U2 -->|Access request| SSP
+    SSP -->|SAMLRequest| AAD & OKTA
+    AAD --> CA --> MFA
+    MFA -->|Satisfied| AAD
+    AAD & OKTA -->|SAMLResponse| SSP
+    SSP -->|Grant| APP
+```
+
+-----
+
+## 🔄 SSO + MFA Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant SP as SP (sp.lab.local)
+    participant IdP as Azure AD / Okta
+    participant MFA as MFA Authenticator
+    participant CA as Conditional Access
+
+    U->>SP: 1. Access protected resource
+    SP->>IdP: 2. SAMLRequest (signed, HTTP-Redirect)
+    IdP->>CA: 3. Evaluate policies
+    CA-->>IdP: 4. MFA required
+    IdP->>U: 5. Username + Password
+    IdP->>MFA: 6. MFA challenge
+    U->>MFA: 7. Approve / OTP
+    MFA-->>IdP: 8. Satisfied ✓
+    IdP->>SP: 9. SAMLResponse (signed, amr=mfa)
+    SP->>U: 10. Session established ✓
+```
+
+-----
+
+## Prerequisites
+
+|Requirement               |Notes                                 |
+|--------------------------|--------------------------------------|
+|Azure AD / Entra ID tenant|Global Admin or Application Admin role|
+|PowerShell 7+             |`winget install Microsoft.PowerShell` |
+|Microsoft.Graph module    |`Install-Module Microsoft.Graph`      |
+|Ubuntu 22.04 VM (for SP)  |Or any Debian-based distro            |
+
+```powershell
+Install-Module Microsoft.Graph -Scope CurrentUser -Force
+```
+
+-----
+
+## 🚀 Lab Walkthrough
+
+-----
+
+### Step 1 — Register Enterprise App + Configure SAML
+
+Run the setup script to create the Azure AD Enterprise Application, configure SAML 2.0 SSO, generate a signing cert, and assign the lab group.
+
+```powershell
+.\scripts\powershell\01-AzureAD-SSO-Setup.ps1 `
+    -TenantId        "your-tenant-id" `
+    -AppDisplayName  "IAM-SSO-MFA-Lab" `
+    -AssignmentGroup "SSO-Lab-Users" `
+    -ReplyUrl        "https://sp.lab.local/simplesaml/module.php/saml/sp/saml2-acs.php/lab-sp" `
+    -EntityId        "https://sp.lab.local"
+```
+
+**What the script does:**
+
+- Registers Application + Service Principal in Entra ID
+- Sets `PreferredSingleSignOnMode = "saml"`
+- Generates 3-year RSA token signing certificate
+- Assigns the `SSO-Lab-Users` security group
+- Outputs federation metadata (SSO URL, Entity ID, cert thumbprint)
+
+**Azure AD App Registrations — after running the script:**
+
+**PowerShell terminal output:**
+
+-----
+
+### Step 2 — Create Conditional Access + MFA Policies
+
+Creates three CA policies targeting the lab app:
+
+|Policy                    |Scope                      |Grant Control         |
+|--------------------------|---------------------------|----------------------|
+|`[LAB] Require MFA`       |All users, all client apps |Require MFA           |
+|`[LAB] Block Legacy Auth` |All users, legacy protocols|Block                 |
+|`[LAB] Risk-Based Step-Up`|Sign-in risk: Medium/High  |MFA + Compliant device|
+
+```powershell
+# Run Report-Only first to validate impact before enforcing
+.\scripts\powershell\02-MFA-ConditionalAccess.ps1 `
+    -TenantId    "your-tenant-id" `
+    -TargetAppId "your-app-client-id"
+
+# Add -EnablePolicies to enforce (removes report-only mode)
+.\scripts\powershell\02-MFA-ConditionalAccess.ps1 `
+    -TenantId    "your-tenant-id" `
+    -TargetAppId "your-app-client-id" `
+    -EnablePolicies
+```
+
+>  **Always validate with Entra ID → Security → Conditional Access → What If before enabling.**
+
+**Conditional Access policy blade — all 3 policies enabled:**
+
+-----
+
+### Step 3 — Deploy the SAML Service Provider (SimpleSAMLphp)
+
+On your Ubuntu VM, run the SP setup script. Installs Apache, PHP, SimpleSAMLphp, generates SP key pair, and wires up the IdP metadata.
+
+```bash
+# First download the IdP signing cert:
+# Entra ID → Enterprise Apps → IAM-SSO-MFA-Lab → SAML → Certificates → Download (Base64)
+
+sudo bash scripts/bash/setup-simplesamlphp-sp.sh \
+    "https://sts.windows.net/your-tenant-id/" \
+    "https://login.microsoftonline.com/your-tenant-id/saml2" \
+    "./idp-signing.crt" \
+    "sp.lab.local"
+```
+
+After the script completes, take the SP Entity ID and ACS URL from the output and register them back in the Azure AD SAML config (Identifier and Reply URL fields).
+
+**SimpleSAMLphp SP — configuration verified, lab-sp auth source ready:**
+
+-----
+
+### Step 4 — Trigger SSO and Satisfy MFA
+
+1. Browse to `https://sp.lab.local/simplesaml`
+1. Click **Test configured authentication sources → lab-sp**
+1. You’re redirected to Azure AD — authenticate with your credentials
+1. Conditional Access evaluates → MFA challenge fires
+
+**Azure AD MFA prompt — triggered by Conditional Access policy:**
+
+1. Approve the push notification or enter your TOTP code
+1. Azure AD issues a signed SAML assertion with `amr=["mfa","pwd","otp"]`
+1. You’re redirected back to the SP with the decoded assertion
+
+**SimpleSAMLphp — SSO success, attributes received, amr=mfa confirmed:**
+
+-----
+
+### Step 5 — Inspect the SAML Assertion
+
+The SimpleSAMLphp test page decodes the full assertion. Key fields to verify:
+
+|Claim                 |Expected Value                     |What It Means         |
+|----------------------|-----------------------------------|----------------------|
+|`amr`                 |`["mfa", "pwd", "otp"]`            |MFA was satisfied     |
+|`AuthnContextClassRef`|`PasswordProtectedTransport`       |Auth context          |
+|Signature             |Valid (IdP cert thumbprint matches)|Assertion not tampered|
+|`NotOnOrAfter`        |Future timestamp                   |Assertion not expired |
+
+**Decoded SAML assertion — amr=mfa highlighted:**
+
+-----
+
+### Step 6 — Generate Audit Report
+
+Pull sign-in logs from Azure AD and generate an HTML audit report covering MFA satisfaction rate, CA policy coverage, and app registration integrity.
+
+```powershell
+.\scripts\powershell\03-Validate-SSO-MFA.ps1 `
+    -TenantId            "your-tenant-id" `
+    -TargetAppId         "your-app-client-id" `
+    -ReportPath          ".\IAM-SSO-MFA-Lab-Report.html" `
+    -SignInLookbackHours 24
+```
+
+**Lab audit report — HTML output:**
+
+Report includes:
+
+- Sign-in volume, MFA satisfaction rate, CA pass rate, failure count
+- App registration integrity (SSO mode, cert expiry, group assignment)
+- CA policy coverage with state and grant controls
+- MFA enforcement rate progress bar
+
+-----
+
+## 🔧 Okta as IdP (Alternative Path)
+
+The `configs/okta/` directory has API payloads for Okta instead of Azure AD:
+
+```bash
+# Register SAML app
+curl -s -X POST "https://{yourOktaDomain}/api/v1/apps" \
+  -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d @configs/okta/okta-saml-app.json
+
+# Apply MFA enrollment policy
+curl -s -X POST "https://{yourOktaDomain}/api/v1/policies" \
+  -H "Authorization: SSWS ${OKTA_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d @configs/okta/okta-mfa-policy.json
+```
+
+-----
+
+## Security Notes
+
+- **Never commit** real tenant IDs, secrets, or certificates. Use environment variables or a vault.
+- The CA exclusion group (`CA-MFA-Exclusions`) should have **zero standing members** — break-glass only.
+- SP private key (`sp.key`) must be `chmod 600`, owned by `www-data`.
+- Rotate the SAML signing cert before the 3-year expiry — calendar a reminder.
+- The legacy auth block policy should be the **first** thing enabled in production — it eliminates the largest MFA bypass vector.
+
+-----
+
+## References
+
+- [Microsoft Entra ID SAML SSO Docs](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/what-is-single-sign-on)
+- [Conditional Access Overview](https://learn.microsoft.com/en-us/entra/identity/conditional-access/overview)
+- [SimpleSAMLphp SP Documentation](https://simplesamlphp.org/docs/stable/simplesamlphp-sp)
+- [SAML 2.0 Core Specification — OASIS](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf)
+- [NIST SP 800-63B — Digital Identity Guidelines](https://pages.nist.gov/800-63-3/sp800-63b.html)
+
+-----
+
+## Author
+
+**Aaron** — IAM Analyst II  
+*Azure AD / Entra ID · Okta · SailPoint · Saviynt · Epic · Active Directory · PowerShell*  
+*CEH · Security+ · SC-900 · AZ-900 · Saviynt · SailPoint · Epic DC200*
+
+-----
+
+*Lab environment — review your org’s security requirements before adapting to production.*
